@@ -1,10 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { db } from "../../src/lib/firebase";
+import { db } from "@/src/lib/firebase";
 import { collection, addDoc, getDocs, setDoc, doc } from "firebase/firestore";
 import { serverTimestamp } from "firebase/firestore";
-import { deleteDoc } from "firebase/firestore";
+//import { deleteDoc } from "firebase/firestore";
+import { deleteDoc, updateDoc } from "firebase/firestore";
+
+
 type CarryForward = Record<string, number>;
 
 export default function ExpensePage() {
@@ -23,7 +26,13 @@ export default function ExpensePage() {
 
   const founders = ["Founder1", "Founder2", "Founder3"];
   const companyName = "Company";
-  
+  const [search, setSearch] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editAmount, setEditAmount] = useState("");
+  const [editPaidBy, setEditPaidBy] = useState("");
+  const [darkMode, setDarkMode] = useState(true); // default dark
+
 const getCurrentMonthKey = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -31,7 +40,15 @@ const getCurrentMonthKey = () => {
   return `${year}-${month}`;
 };
 
-const currentMonth = getCurrentMonthKey();
+const [selectedDate, setSelectedDate] = useState(new Date());
+
+const getMonthKeyFromDate = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+};
+
+const currentMonth = getMonthKeyFromDate(selectedDate);
 
   /* ---------------- LOAD DATA ---------------- */
 
@@ -46,11 +63,9 @@ const currentMonth = getCurrentMonthKey();
   };
 
 const getPreviousMonthKey = () => {
-  const now = new Date();
-  now.setMonth(now.getMonth() - 1);
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  return `${year}-${month}`;
+  const prev = new Date(selectedDate);
+  prev.setMonth(prev.getMonth() - 1);
+  return getMonthKeyFromDate(prev);
 };
 
 const loadCarryForward = async () => {
@@ -70,7 +85,48 @@ useEffect(() => {
   loadExpenses();
   loadSettlements();
   loadCarryForward();
-}, []);
+}, [currentMonth]);
+
+const startEdit = (exp: any) => {
+  setEditingId(exp.id);
+  setEditTitle(exp.title);
+  setEditAmount(exp.amount.toString());
+  setEditPaidBy(exp.paidBy);
+};
+
+const cancelEdit = () => {
+  setEditingId(null);
+};
+
+const saveEdit = async (id: string) => {
+  if (!editTitle || !editAmount || !editPaidBy) {
+    alert("Fill all fields");
+    return;
+  }
+
+  await updateDoc(
+    doc(db, "months", currentMonth, "expenses", id),
+    {
+      title: editTitle,
+      amount: Number(editAmount),
+      paidBy: editPaidBy
+    }
+  );
+
+  setEditingId(null);
+  loadExpenses();
+};
+
+
+const deleteExpense = async (id: string) => {
+  const confirmDelete = confirm("Delete this expense?");
+  if (!confirmDelete) return;
+
+  await deleteDoc(doc(db, "months", currentMonth, "expenses", id));
+
+  loadExpenses();
+};
+
 
   /* ---------------- ADD EXPENSE ---------------- */
 
@@ -104,9 +160,10 @@ const companyPayments = expenses
   .reduce((sum, e) => sum + e.amount, 0);
 
 // Each founder share of company expenses
-const eachShare = parseFloat(
-  (companyPayments / founders.length).toFixed(2)
-) || 0;
+const eachShare =
+  founders.length > 0
+    ? Number((companyPayments / founders.length).toFixed(2))
+    : 0;
 
 // Track how much each founder paid
 const paidMap: any = { Founder1: 0, Founder2: 0, Founder3: 0 };
@@ -145,7 +202,6 @@ const balance = parseFloat(
 
   return { name, paid, balance };
 });
-
 
   /* ---------------- MARK PAID ---------------- */
 
@@ -195,10 +251,24 @@ const confirmReset = confirm(
 };
 
 const getDueDate = () => {
-  const now = new Date();
-  const due = new Date(now.getFullYear(), now.getMonth() + 1, 15);
-  return due;
+  const now = selectedDate;
+  return new Date(now.getFullYear(), now.getMonth() + 1, 15);
 };
+
+const getCycleEndDate = () => {
+  const now = selectedDate;
+  return new Date(now.getFullYear(), now.getMonth() + 1, 0); // last day
+};
+
+const isOverdue = () => {
+  const today = new Date();
+  const due = getDueDate();
+
+  const hasPending = balances.some(b => Math.abs(b.balance) > 1);
+
+  return today > due && hasPending;
+};
+
 
 // DATE FORMAT
 const formatDate = (date: Date) => {
@@ -208,241 +278,494 @@ const formatDate = (date: Date) => {
   return `${d}/${m}/${y}`; // DD/MM/YYYY
 };
 
+
+const ITEMS_PER_PAGE = 8;
+
+const [expensePage, setExpensePage] = useState(1);
+const [settlementPage, setSettlementPage] = useState(1);
+
+const filteredExpenses = expenses.filter(exp =>
+  exp.title.toLowerCase().includes(search.toLowerCase())
+);
+
+const paginatedExpenses = filteredExpenses.slice(
+  (expensePage - 1) * ITEMS_PER_PAGE,
+  expensePage * ITEMS_PER_PAGE
+);
+
+const paginatedSettlements = settlements.slice(
+  (settlementPage - 1) * ITEMS_PER_PAGE,
+  settlementPage * ITEMS_PER_PAGE
+);
+
+useEffect(() => {
+  setExpensePage(1);
+  setSettlementPage(1);
+  setSearch("");
+}, [currentMonth]);
+
   /* ---------------- UI ---------------- */
 
   return (
-    <div className="min-h-screen bg-gray-100 p-8">
-      <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8">
+  <div
+  className={`min-h-screen p-6 transition-colors duration-300 ${
+    darkMode
+      ? "bg-gradient-to-br from-slate-900 to-slate-800 text-white"
+      : "bg-gradient-to-br from-gray-100 to-white text-gray-900"
+  }`}
+>
 
-        {/* LEFT PANEL */}
-        <div className="bg-white shadow-lg rounded-xl p-6">
-          <h1 className="text-2xl font-bold mb-4">Add Expense</h1>
+    {/* HEADER */}
+<div className="flex justify-between items-center mb-6">
+  <h1 className="text-3xl font-bold">Expense Dashboard</h1>
 
-          <input
-            className="w-full border p-2 rounded mb-3"
-            placeholder="Expense Title"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-          />
+  <button
+    onClick={() => setDarkMode(!darkMode)}
+    className={`px-4 py-2 rounded-lg font-semibold ${
+      darkMode
+        ? "bg-yellow-400 text-black hover:bg-yellow-300"
+        : "bg-slate-800 text-white hover:bg-slate-700"
+    }`}
+  >
+    {darkMode ? "☀ Light Mode" : "🌙 Dark Mode"}
+  </button>
+</div>
 
-          <input
-            className="w-full border p-2 rounded mb-3"
-            placeholder="Amount"
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
-          />
+    {/* MONTH NAVIGATION */}
+    <div className="flex justify-center items-center gap-4 mb-6">
+      <button
+        className={`px-4 py-2 rounded-lg ${
+  darkMode
+    ? "bg-slate-700 hover:bg-slate-600"
+    : "bg-gray-200 hover:bg-gray-300 text-black"
+}`}
+        onClick={() =>
+          setSelectedDate(
+            new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1)
+          )
+        }
+      >
+        ◀ Prev Month
+      </button>
 
-          <select
-            className="w-full border p-2 rounded mb-4"
-            value={paidBy}
-            onChange={e => setPaidBy(e.target.value)}
+      <span className="text-lg font-semibold">{currentMonth}</span>
+
+      <button
+        className={`px-4 py-2 rounded-lg ${
+  darkMode
+    ? "bg-slate-700 hover:bg-slate-600"
+    : "bg-gray-200 hover:bg-gray-300 text-black"
+}`}
+        onClick={() =>
+          setSelectedDate(
+            new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1)
+          )
+        }
+      >
+        Next Month ▶
+      </button>
+    </div>
+
+    <div className="grid md:grid-cols-2 gap-6">
+
+      {/* LEFT — ADD EXPENSE */}
+      <div
+  className={`rounded-xl p-6 shadow-xl backdrop-blur-sm space-y-4 ${
+    darkMode ? "bg-slate-800" : "bg-white border"
+  }`}
+>
+        <h2 className="text-xl font-semibold">Add Expense</h2>
+
+        <input
+          className={`w-full p-3 rounded ${
+  darkMode
+    ? "bg-slate-700 text-white"
+    : "bg-gray-100 text-black border"
+}`}
+          placeholder="Expense Title"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+        />
+
+        <input
+          className={`w-full p-3 rounded ${
+  darkMode
+    ? "bg-slate-700 text-white"
+    : "bg-gray-100 text-black border"
+}`}
+          placeholder="Amount"
+          value={amount}
+          onChange={e => setAmount(e.target.value)}
+        />
+
+        <select
+          className={`w-full p-3 rounded ${
+  darkMode
+    ? "bg-slate-700 text-white"
+    : "bg-gray-100 text-black border"
+}`}
+          value={paidBy}
+          onChange={e => setPaidBy(e.target.value)}
+        >
+          <option value="">Who Paid?</option>
+          <option value="Founder1">Founder1</option>
+          <option value="Founder2">Founder2</option>
+          <option value="Founder3">Founder3</option>
+          <option value="Company">Company</option>
+        </select>
+
+        <button
+          onClick={addExpense}
+          className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-lg font-semibold"
+        >
+          Add Expense
+        </button>
+      </div>
+
+      {/* RIGHT PANEL */}
+      <div className={`rounded-xl p-6 shadow-xl backdrop-blur-sm space-y-6 ${ darkMode ? "bg-slate-800" : "bg-white border"}`}>
+
+        {/* KPI GRID */}
+        <div className="grid grid-cols-2 gap-4">
+
+          <div
+  className={`p-4 rounded-lg ${
+    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  }`}
+>
+            <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Company Expenses</p>
+            <p className="text-xl font-bold">
+              ₹{companyPayments.toLocaleString("en-IN")}
+            </p>
+          </div>
+
+          <div
+  className={`p-4 rounded-lg ${
+    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  }`}
+>
+           <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Founder Payments</p>
+            <p className="text-xl font-bold">
+              ₹{founderPayments.toLocaleString("en-IN")}
+            </p>
+          </div>
+
+          <div
+  className={`p-4 rounded-lg ${
+    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  }`}
+>
+            <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Each Share</p>
+            <p className="text-xl font-bold">
+              ₹{eachShare.toLocaleString("en-IN")}
+            </p>
+          </div>
+
+          <div
+  className={`p-4 rounded-lg ${
+    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  }`}
+>
+            <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Total Due</p>
+            <p className="text-xl font-bold">
+              ₹{(
+                companyPayments -
+                founderPayments +
+                Object.values(carryForward).reduce((a:any,b:any)=>a+b,0)
+              ).toFixed(0)}
+            </p>
+          </div>
+        </div>
+
+        {/* STATEMENT */}
+        <div
+  className={`p-4 rounded-lg space-y-1 ${
+    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  }`}
+>
+          <h2 className="text-lg font-semibold">Company Statement</h2>
+
+          <p>Billing Period: {currentMonth}</p>
+          <p>
+            Previous Due: ₹{
+              Object.values(carryForward).reduce((a:any,b:any)=>a+b,0)
+            }
+          </p>
+          <p>New Company Expenses: ₹{companyPayments}</p>
+          <p>Total Founder Payments: ₹{founderPayments}</p>
+
+          <p className="text-2xl font-bold text-green-400">
+            TOTAL DUE: ₹{
+              (
+                companyPayments -
+                founderPayments +
+                Object.values(carryForward).reduce((a:any,b:any)=>a+b,0)
+              ).toFixed(2)
+            }
+          </p>
+
+          <p>Cycle Ends: {formatDate(getCycleEndDate())}</p>
+          <p>Due Date: {formatDate(getDueDate())}</p>
+
+          <p>
+            {isOverdue()
+              ? "🔴 OVERDUE"
+              : balances.some(b => Math.abs(b.balance) > 1)
+              ? "🟡 Payment Pending"
+              : "🟢 Settled"}
+          </p>
+        </div>
+
+        <button
+          onClick={resetMonth}
+          className="w-full bg-red-600 hover:bg-red-700 py-3 rounded-lg font-semibold"
+        >
+          Reset Month
+        </button>
+
+        {/* BALANCES */}
+        <div className="space-y-3">
+          {balances
+            .filter(b => Math.abs(b.balance) > 0.5)
+            .map(b => (
+              <div
+  key={b.name}
+  className={`p-4 rounded-lg ${
+    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  }`}
+>
+                <p className="font-bold">{b.name}</p>
+                <p>Total Paid: ₹{b.paid}</p>
+                <p>Total Settled: ₹{settlementMap[b.name] || 0}</p>
+                <p>Previous Due: ₹{carryForward[b.name] || 0}</p>
+
+                <p className="font-semibold mt-1">
+                  {b.balance > 0
+                    ? `Company owes ₹${b.balance.toFixed(2)}`
+                    : `Owes Company ₹${Math.abs(b.balance).toFixed(2)}`
+                  }
+                </p>
+
+                {b.balance < -1 && (
+                  <button
+                    onClick={() => markAsPaid(b.name, Math.abs(b.balance))}
+                    className="mt-2 bg-green-600 hover:bg-green-700 px-3 py-1 rounded"
+                  >
+                    Mark Paid
+                  </button>
+                )}
+              </div>
+            ))}
+        </div>
+
+        {/* TAB BUTTONS */}
+        <div className="flex gap-3 mt-4">
+          <button
+            onClick={() => setActiveTab("expenses")}
+            className={`px-4 py-2 rounded-lg ${
+              activeTab === "expenses"
+                ? "bg-blue-600"
+                : darkMode
+  ? "bg-slate-700 hover:bg-slate-600"
+  : "bg-gray-200 hover:bg-gray-300 text-black"
+            }`}
           >
-            <option value="">Who Paid?</option>
-            <option value="Founder1">Founder1</option>
-            <option value="Founder2">Founder2</option>
-            <option value="Founder3">Founder3</option>
-            <option value="Company">Company</option>
-          </select>
+            Expenses
+          </button>
 
           <button
-            onClick={addExpense}
-            className="w-full bg-blue-600 text-white p-2 rounded"
+            onClick={() => setActiveTab("settlements")}
+            className={`px-4 py-2 rounded-lg ${
+              activeTab === "settlements"
+                ? "bg-blue-600"
+                : darkMode
+  ? "bg-slate-700 hover:bg-slate-600"
+  : "bg-gray-200 hover:bg-gray-300 text-black"
+            }`}
           >
-            Add Expense
+            Settlements
           </button>
         </div>
 
-        {/* RIGHT PANEL */}
-        <div className="bg-white shadow-lg rounded-xl p-6">
-{/* ===== STATEMENT SUMMARY CARD ===== */}
-<div className="bg-indigo-600 text-white p-6 rounded-xl mb-6">
-  <h2 className="text-xl font-bold mb-2">Company Statement</h2>
+        {/* ================= EXPENSE TABLE ================= */}
+        {activeTab === "expenses" && (
+          <>
+            <h2 className="text-xl font-semibold mt-4">Expense History</h2>
 
-  <p>Billing Period: {currentMonth}</p>
+            <input
+            value={search}
+              placeholder="Search expenses..."
+              className={`w-full p-2 rounded mb-3 ${
+  darkMode
+    ? "bg-slate-700 text-white"
+    : "bg-gray-100 text-black border"
+}`}
+              onChange={e => setSearch(e.target.value)}
+            />
 
-  <p>Previous Due: ₹{
-    Object.values(carryForward).reduce((a: any, b: any) => a + b, 0)
-  }</p>
+            <div className="overflow-auto">
+              <table className="w-full border-collapse">
+                <thead className={darkMode ? "bg-slate-700" : "bg-gray-200"}>
+                  <tr>
+                    <th className="p-2 text-left">Title</th>
+                    <th className="p-2 text-left">Amount</th>
+                    <th className="p-2 text-left">Paid By</th>
+                    <th className="p-2 text-left">Date / Actions</th>
+                  </tr>
+                </thead>
 
-  <p>New Company Expenses: ₹{companyPayments}</p>
-
-  <p>Total Founder Payments: ₹{founderPayments}</p>
-
-  <p className="text-lg font-bold mt-2">
-    TOTAL DUE: ₹{
-      (
-        companyPayments -
-        founderPayments +
-        Object.values(carryForward).reduce((a: any, b: any) => a + b, 0)
-      ).toFixed(2)
-    }
-  </p>
-
-  <p className="mt-2">
-    Due Date: {formatDate(getDueDate())}
-  </p>
-</div>
-
-          <h2 className="text-xl font-bold mb-2">Monthly Summary</h2>
-          <p className="mt-3 font-semibold">
-  Company Net Position: ₹{
-    (founderPayments - companyPayments).toFixed(2)
-  }
-</p>
-
-          <button
-  onClick={resetMonth}
-  className="bg-red-600 text-white px-4 py-2 rounded mt-3"
+                <tbody>
+                  {paginatedExpenses.map(exp => (
+                    <tr
+  key={exp.id}
+  className={`border-b ${
+    darkMode ? "border-slate-700" : "border-gray-300"
+  }`}
 >
-  Reset Month
-</button>
 
-         <p>Total Founder Payments: ₹{founderPayments}</p>
-         <p>Total Company Payments: ₹{companyPayments}</p>
-         <p>Each Founder Share (Company Expenses): ₹{eachShare.toFixed(2)}</p>
+                      {/* TITLE */}
+                      <td className="p-2">
+                        {editingId === exp.id ? (
+                          <input
+                            value={editTitle}
+                            onChange={e => setEditTitle(e.target.value)}
+                            className={`w-full p-1 rounded ${
+  darkMode
+    ? "bg-slate-600 text-white"
+    : "bg-white border text-black"
+}`}
+                          />
+                        ) : exp.title}
+                      </td>
 
-          <p>
-  Due Date: {formatDate(getDueDate())}
-</p>
-<p className="mt-2">
-  Status: {
-    Object.values(balances).some(b => Math.abs(b.balance) > 1)
-      ? "⚠ Payment Pending"
-      : "✅ Settled"
-  }
-</p>
+                      {/* AMOUNT */}
+                      <td className="p-2">
+                        {editingId === exp.id ? (
+                          <input
+                            value={editAmount}
+                            onChange={e => setEditAmount(e.target.value)}
+                            className={`w-full p-1 rounded ${
+  darkMode
+    ? "bg-slate-600 text-white"
+    : "bg-white border text-black"
+}`}
+                          />
+                        ) : `₹${exp.amount}`}
+                      </td>
 
-          {/* BALANCES */}
-          <div className="mt-4">
-            {balances
-              .filter(b => Math.abs(b.balance) > 0.5)
-              .map(b => (
-                <div key={b.name} className="border p-3 rounded mb-2">
+                      {/* PAID BY */}
+                      <td className="p-2">
+                        {editingId === exp.id ? (
+                          <select
+                            value={editPaidBy}
+                            onChange={e => setEditPaidBy(e.target.value)}
+                            className={`p-1 rounded ${
+  darkMode
+    ? "bg-slate-600 text-white"
+    : "bg-white border text-black"
+}`}
+                          >
+                            <option value="Founder1">Founder1</option>
+                            <option value="Founder2">Founder2</option>
+                            <option value="Founder3">Founder3</option>
+                            <option value="Company">Company</option>
+                          </select>
+                        ) : exp.paidBy}
+                      </td>
 
-                  <p className="font-semibold">{b.name}</p>
-                  <p>Total Paid: ₹{b.paid}</p>
-                  <p>Total Settled: ₹{settlementMap[b.name] || 0}</p>
-<p>Previous Due: ₹{carryForward[b.name] || 0}</p>
+                      {/* DATE + ACTIONS */}
+                      <td className="p-2">
+                        {exp.createdAt
+                          ? formatDate(new Date(exp.createdAt.seconds * 1000))
+                          : "N/A"}
 
-                  <p>
-                    {b.balance > 0
-                      ? `Company owes ₹${b.balance.toFixed(2)}`
-                      : `Owes Company ₹${Math.abs(b.balance).toFixed(2)}`
-                    }
-                  </p>
+                        <div className="flex gap-2 mt-1">
 
-                  {b.balance < -1 && (
-                    <button
-                      onClick={() =>
-                        markAsPaid(b.name, Math.abs(b.balance))
-                      }
-                      className="mt-2 bg-green-600 text-white px-3 py-1 rounded"
-                    >
-                      Mark Paid
-                    </button>
-                  )}
+                          {editingId === exp.id ? (
+                            <>
+                              <button
+                                onClick={() => saveEdit(exp.id)}
+                                className="bg-green-600 px-2 py-1 rounded"
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={cancelEdit}
+                                className="bg-gray-500 px-2 py-1 rounded"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => startEdit(exp)}
+                                className="bg-blue-600 px-2 py-1 rounded"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => deleteExpense(exp.id)}
+                                className="bg-red-600 px-2 py-1 rounded"
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
 
-                </div>
-              ))}
-          </div>
-
-          {/* TAB BUTTONS */}
-          <div className="flex gap-4 mt-6">
-            <button
-              onClick={() => setActiveTab("expenses")}
-              className={`px-4 py-2 rounded ${
-                activeTab === "expenses"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-200"
-              }`}
-            >
-              Expenses
-            </button>
-
-            <button
-              onClick={() => setActiveTab("settlements")}
-              className={`px-4 py-2 rounded ${
-                activeTab === "settlements"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-200"
-              }`}
-            >
-              Settlements
-            </button>
-          </div>
-
-          {/* EXPENSE TABLE */}
-          {activeTab === "expenses" && (
-            <>
-              <hr className="my-6" />
-              <h2 className="text-xl font-bold mb-2">Expense History</h2>
-
-              <div className="max-h-72 overflow-y-auto">
-                <table className="w-full border">
-                  <thead>
-                    <tr className="bg-gray-200">
-                      <th className="border p-2">Title</th>
-                      <th className="border p-2">Amount</th>
-                      <th className="border p-2">Paid By</th>
-                      <th className="border p-2">Date</th>
+                        </div>
+                      </td>
                     </tr>
-                  </thead>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
 
-                  <tbody>
-                    {expenses.map(exp => (
-                      <tr key={exp.id}>
-                        <td className="border p-2">{exp.title}</td>
-                        <td className="border p-2">₹{exp.amount}</td>
-                        <td className="border p-2">{exp.paidBy}</td>
-                        <td className="border p-2">
-                          {exp.createdAt
-                            ? formatDate(new Date(exp.createdAt.seconds * 1000))
-                            : "N/A"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+        {/* ================= SETTLEMENT TABLE ================= */}
+        {activeTab === "settlements" && (
+          <>
+            <h2 className="text-xl font-semibold mt-4">
+              Settlement History
+            </h2>
 
-          {/* SETTLEMENT TABLE */}
-          {activeTab === "settlements" && (
-            <>
-              <hr className="my-6" />
-              <h2 className="text-xl font-bold mb-2">Settlement History</h2>
+            <div className="overflow-auto">
+              <table className="w-full border-collapse">
+                <thead className={darkMode ? "bg-slate-700" : "bg-gray-200"}>
+                  <tr>
+                    <th className="p-2 text-left">Founder</th>
+                    <th className="p-2 text-left">Amount Paid</th>
+                    <th className="p-2 text-left">Date</th>
+                  </tr>
+                </thead>
 
-              <div className="max-h-72 overflow-y-auto">
-                <table className="w-full border">
-                  <thead>
-                    <tr className="bg-gray-200">
-                      <th className="border p-2">Founder</th>
-                      <th className="border p-2">Amount Paid</th>
-                      <th className="border p-2">Date</th>
+                <tbody>
+                  {paginatedSettlements.map(s => (
+                    <tr
+  key={s.id}
+  className={`border-b ${
+    darkMode ? "border-slate-700" : "border-gray-300"
+  }`}
+>
+                      <td className="p-2">{s.founder}</td>
+                      <td className="p-2">₹{s.amount}</td>
+                      <td className="p-2">
+                        {s.settledAt
+                          ? formatDate(new Date(s.settledAt.seconds * 1000))
+                          : "N/A"}
+                      </td>
                     </tr>
-                  </thead>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
 
-                  <tbody>
-                    {settlements.map(s => (
-                      <tr key={s.id}>
-                        <td className="border p-2">{s.founder}</td>
-                        <td className="border p-2">₹{s.amount}</td>
-                        <td className="border p-2">
-                          {s.settledAt
-                            ? formatDate(new Date(s.settledAt.seconds * 1000))
-                            : "N/A"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-
-        </div>
       </div>
     </div>
-  );
+  </div>
+);
+
 }
