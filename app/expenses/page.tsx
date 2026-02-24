@@ -1,12 +1,25 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import DataTable from "react-data-table-component";
+import { createTheme } from "react-data-table-component";
 import { db } from "@/src/lib/firebase";
 import { collection, addDoc, getDocs, setDoc, doc } from "firebase/firestore";
 import { serverTimestamp } from "firebase/firestore";
 //import { deleteDoc } from "firebase/firestore";
 import { deleteDoc, updateDoc } from "firebase/firestore";
-
+createTheme("darkProfessional", {
+  text: {
+    primary: "#E2E8F0",
+    secondary: "#94A3B8",
+  },
+  background: {
+    default: "#1E293B",
+  },
+  divider: {
+    default: "#334155",
+  },
+});
 
 type CarryForward = Record<string, number>;
 
@@ -32,6 +45,12 @@ export default function ExpensePage() {
   const [editAmount, setEditAmount] = useState("");
   const [editPaidBy, setEditPaidBy] = useState("");
   const [darkMode, setDarkMode] = useState(true); // default dark
+  // NEW transfer states (for Paid To feature)
+const [fromAccount, setFromAccount] = useState("");
+const [toAccount, setToAccount] = useState("");
+const [transferAmount, setTransferAmount] = useState("");
+
+const accounts = ["Founder1", "Founder2", "Founder3", "Company"];
 
 const getCurrentMonthKey = () => {
   const now = new Date();
@@ -178,9 +197,17 @@ expenses.forEach(exp => {
 const settlementMap: any = { Founder1: 0, Founder2: 0, Founder3: 0 };
 
 settlements.forEach(s => {
-  if (settlementMap[s.founder] !== undefined) {
-    settlementMap[s.founder] += s.amount;
+
+  // Founder paid money TO company
+  if (s.to === "Company" && settlementMap[s.from] !== undefined) {
+    settlementMap[s.from] += s.amount;
   }
+
+  // Company paid money TO founder
+  if (s.from === "Company" && settlementMap[s.to] !== undefined) {
+    settlementMap[s.to] -= s.amount;
+  }
+
 });
 
 // Calculate balances
@@ -203,19 +230,29 @@ const balance = parseFloat(
   return { name, paid, balance };
 });
 
-  /* ---------------- MARK PAID ---------------- */
+  // NEW — record transfer (Paid By → Paid To)
+const recordTransfer = async () => {
+  if (!fromAccount || !toAccount || !transferAmount) {
+    alert("Fill all fields");
+    return;
+  }
 
-  const markAsPaid = async (founderName: string, amount: number) => {
-    if (amount <= 0) return;
-
-    await addDoc(collection(db, "months", currentMonth, "settlements"), {
-      founder: founderName,
-      amount,
+  await addDoc(
+    collection(db, "months", currentMonth, "settlements"),
+    {
+      from: fromAccount,
+      to: toAccount,
+      amount: Number(transferAmount),
       settledAt: serverTimestamp()
-    });
+    }
+  );
 
-    loadSettlements();
-  };
+  setFromAccount("");
+  setToAccount("");
+  setTransferAmount("");
+
+  loadSettlements();
+};
 
   /* ---------------- RESET MONTH ---------------- */
 
@@ -304,27 +341,88 @@ useEffect(() => {
   setSearch("");
 }, [currentMonth]);
 
+const expenseColumns = [
+  {
+    name: "Title",
+    selector: (row: any) => row.title,
+    sortable: true
+  },
+  {
+  name: "Amount",
+  selector: (row: any) => row.amount,
+  sortable: true,
+  cell: (row: any) => `₹${row.amount}`
+},
+  {
+    name: "Paid By",
+    selector: (row: any) => row.paidBy,
+    sortable: true
+  },
+  {
+  name: "Date",
+  selector: (row: any) => row.createdAt?.seconds || 0,
+  sortable: true,
+  cell: (row: any) =>
+    row.createdAt?.toDate().toLocaleDateString() || ""
+}
+];
+
+const settlementColumns = [
+  {
+    name: "Paid By",
+    selector: (row: any) => row.from || row.founder || "Company",
+    sortable: true
+  },
+  {
+    name: "Paid To",
+    selector: (row: any) => row.to || "Company",
+    sortable: true
+  },
+  {
+  name: "Amount",
+  selector: (row: any) => row.amount,
+  sortable: true,
+  cell: (row: any) => `₹${row.amount}`
+},
+  {
+    name: "Type",
+    selector: (row: any) =>
+      row.from ? "Transfer" : "Mark Paid",
+    sortable: true
+  },
+  {
+  name: "Date",
+  selector: (row: any) => row.settledAt?.seconds || 0,
+  sortable: true,
+  cell: (row: any) =>
+    row.settledAt?.toDate().toLocaleDateString() || ""
+}
+];
+
   /* ---------------- UI ---------------- */
 
-  return (
+return (
   <div
-  className={`min-h-screen p-6 transition-colors duration-300 ${
+  className={`min-h-screen ${
     darkMode
-      ? "bg-gradient-to-br from-slate-900 to-slate-800 text-white"
-      : "bg-gradient-to-br from-gray-100 to-white text-gray-900"
+      ? "bg-slate-950 text-slate-100"
+      : "bg-slate-50 text-slate-900"
   }`}
 >
+  <div className="max-w-7xl mx-auto px-6 py-8">
 
     {/* HEADER */}
-<div className="flex justify-between items-center mb-6">
-  <h1 className="text-3xl font-bold">Expense Dashboard</h1>
+<div className="flex justify-between items-center mb-10">
+  <h1 className="text-4xl font-semibold tracking-tight">
+    Expense Dashboard
+  </h1>
 
   <button
     onClick={() => setDarkMode(!darkMode)}
-    className={`px-4 py-2 rounded-lg font-semibold ${
+    className={`px-5 py-2.5 rounded-xl font-medium shadow-sm transition ${
       darkMode
-        ? "bg-yellow-400 text-black hover:bg-yellow-300"
-        : "bg-slate-800 text-white hover:bg-slate-700"
+        ? "bg-slate-800 hover:bg-slate-700 border border-slate-700"
+        : "bg-white hover:bg-gray-100 border"
     }`}
   >
     {darkMode ? "☀ Light Mode" : "🌙 Dark Mode"}
@@ -332,12 +430,12 @@ useEffect(() => {
 </div>
 
     {/* MONTH NAVIGATION */}
-    <div className="flex justify-center items-center gap-4 mb-6">
+    <div className="flex justify-center items-center gap-6 mb-10">
       <button
-        className={`px-4 py-2 rounded-lg ${
+        className={`px-5 py-2.5 rounded-xl font-medium transition ${
   darkMode
-    ? "bg-slate-700 hover:bg-slate-600"
-    : "bg-gray-200 hover:bg-gray-300 text-black"
+    ? "bg-slate-800 hover:bg-slate-700 border border-slate-700"
+    : "bg-white hover:bg-gray-100 border"
 }`}
         onClick={() =>
           setSelectedDate(
@@ -351,10 +449,10 @@ useEffect(() => {
       <span className="text-lg font-semibold">{currentMonth}</span>
 
       <button
-        className={`px-4 py-2 rounded-lg ${
+        className={`px-5 py-2.5 rounded-xl font-medium transition ${
   darkMode
-    ? "bg-slate-700 hover:bg-slate-600"
-    : "bg-gray-200 hover:bg-gray-300 text-black"
+    ? "bg-slate-800 hover:bg-slate-700 border border-slate-700"
+    : "bg-white hover:bg-gray-100 border"
 }`}
         onClick={() =>
           setSelectedDate(
@@ -366,20 +464,24 @@ useEffect(() => {
       </button>
     </div>
 
-    <div className="grid md:grid-cols-2 gap-6">
+    <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 max-w-7xl mx-auto">
 
-      {/* LEFT — ADD EXPENSE */}
-      <div
-  className={`rounded-xl p-6 shadow-xl backdrop-blur-sm space-y-4 ${
-    darkMode ? "bg-slate-800" : "bg-white border"
+     {/* LEFT — ADD EXPENSE */}
+<div
+  className={`rounded-2xl p-6 shadow-lg space-y-4 h-fit xl:col-span-1 ${
+    darkMode
+  ? "bg-slate-900 border border-slate-800 shadow-xl"
+  : "bg-white border shadow-sm"
   }`}
 >
-        <h2 className="text-xl font-semibold">Add Expense</h2>
+        <h2 className="text-xl font-semibold tracking-tight">
+  Add Expense
+</h2>
 
         <input
           className={`w-full p-3 rounded ${
   darkMode
-    ? "bg-slate-700 text-white"
+    ? "bg-slate-800 border border-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none text-white"
     : "bg-gray-100 text-black border"
 }`}
           placeholder="Expense Title"
@@ -390,7 +492,7 @@ useEffect(() => {
         <input
           className={`w-full p-3 rounded ${
   darkMode
-    ? "bg-slate-700 text-white"
+    ? "bg-slate-800 border border-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none text-white"
     : "bg-gray-100 text-black border"
 }`}
           placeholder="Amount"
@@ -401,7 +503,7 @@ useEffect(() => {
         <select
           className={`w-full p-3 rounded ${
   darkMode
-    ? "bg-slate-700 text-white"
+    ? "bg-slate-800 border border-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none text-white"
     : "bg-gray-100 text-black border"
 }`}
           value={paidBy}
@@ -416,21 +518,27 @@ useEffect(() => {
 
         <button
           onClick={addExpense}
-          className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-lg font-semibold"
+          className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-xl font-medium text-white shadow-sm transition"
         >
           Add Expense
         </button>
       </div>
 
       {/* RIGHT PANEL */}
-      <div className={`rounded-xl p-6 shadow-xl backdrop-blur-sm space-y-6 ${ darkMode ? "bg-slate-800" : "bg-white border"}`}>
+<div
+  className={`rounded-2xl p-6 shadow-lg space-y-6 xl:col-span-2 ${
+    darkMode
+  ? "bg-slate-900 border border-slate-800 shadow-xl"
+  : "bg-white border shadow-sm"
+  }`}
+>
 
         {/* KPI GRID */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-6">
 
           <div
-  className={`p-4 rounded-lg ${
-    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  className={`p-6 rounded-2xl shadow-lg ${
+    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
   }`}
 >
             <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Company Expenses</p>
@@ -440,8 +548,8 @@ useEffect(() => {
           </div>
 
           <div
-  className={`p-4 rounded-lg ${
-    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  className={`p-6 rounded-2xl shadow-lg ${
+    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
   }`}
 >
            <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Founder Payments</p>
@@ -451,8 +559,8 @@ useEffect(() => {
           </div>
 
           <div
-  className={`p-4 rounded-lg ${
-    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  className={`p-6 rounded-2xl shadow-lg ${
+    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
   }`}
 >
             <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Each Share</p>
@@ -462,8 +570,8 @@ useEffect(() => {
           </div>
 
           <div
-  className={`p-4 rounded-lg ${
-    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  className={`p-6 rounded-2xl shadow-lg ${
+    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
   }`}
 >
             <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Total Due</p>
@@ -479,8 +587,8 @@ useEffect(() => {
 
         {/* STATEMENT */}
         <div
-  className={`p-4 rounded-lg space-y-1 ${
-    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+  className={`p-6 rounded-2xl space-y-2 shadow-lg ${
+    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
   }`}
 >
           <h2 className="text-lg font-semibold">Company Statement</h2>
@@ -494,7 +602,7 @@ useEffect(() => {
           <p>New Company Expenses: ₹{companyPayments}</p>
           <p>Total Founder Payments: ₹{founderPayments}</p>
 
-          <p className="text-2xl font-bold text-green-400">
+          <p className="text-2xl font-bold text-indigo-400">
             TOTAL DUE: ₹{
               (
                 companyPayments -
@@ -518,7 +626,7 @@ useEffect(() => {
 
         <button
           onClick={resetMonth}
-          className="w-full bg-red-600 hover:bg-red-700 py-3 rounded-lg font-semibold"
+          className="w-full bg-red-600 hover:bg-red-700 py-3 rounded-xl font-medium text-white shadow-sm transition"
         >
           Reset Month
         </button>
@@ -530,8 +638,8 @@ useEffect(() => {
             .map(b => (
               <div
   key={b.name}
-  className={`p-4 rounded-lg ${
-    darkMode ? "bg-slate-700" : "bg-gray-100 border"
+ className={`p-6 rounded-2xl shadow-lg ${
+    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
   }`}
 >
                 <p className="font-bold">{b.name}</p>
@@ -546,42 +654,93 @@ useEffect(() => {
                   }
                 </p>
 
-                {b.balance < -1 && (
-                  <button
-                    onClick={() => markAsPaid(b.name, Math.abs(b.balance))}
-                    className="mt-2 bg-green-600 hover:bg-green-700 px-3 py-1 rounded"
-                  >
-                    Mark Paid
-                  </button>
-                )}
+
               </div>
             ))}
         </div>
+{/* ===== RECORD TRANSFER (Paid By → Paid To) ===== */}
+<div
+  className={`p-6 rounded-2xl shadow-lg ${
+    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
+  }`}
+>
+  <h2 className="text-lg font-semibold mb-2">
+    Record Settlement (Paid By → Paid To)
+  </h2>
 
+  {/* FROM */}
+  <select
+    value={fromAccount}
+    onChange={e => setFromAccount(e.target.value)}
+    className={`w-full p-2 rounded mb-2 ${
+      darkMode ? "bg-slate-600 text-white" : "bg-white border"
+    }`}
+  >
+    <option value="">Paid By</option>
+    {accounts.map(a => (
+      <option key={a} value={a}>
+        {a}
+      </option>
+    ))}
+  </select>
+
+  {/* TO */}
+  <select
+    value={toAccount}
+    onChange={e => setToAccount(e.target.value)}
+    className={`w-full p-2 rounded mb-2 ${
+      darkMode ? "bg-slate-600 text-white" : "bg-white border"
+    }`}
+  >
+    <option value="">Paid To</option>
+    {accounts.map(a => (
+      <option key={a} value={a}>
+        {a}
+      </option>
+    ))}
+  </select>
+
+  {/* AMOUNT */}
+  <input
+    placeholder="Amount"
+    value={transferAmount}
+    onChange={e => setTransferAmount(e.target.value)}
+    className={`w-full p-2 rounded mb-2 ${
+      darkMode ? "bg-slate-600 text-white" : "bg-white border"
+    }`}
+  />
+
+  <button
+    onClick={recordTransfer}
+    className="w-full bg-indigo-600 hover:bg-indigo-700 py-2 rounded font-medium text-white"
+  >
+    Record Transfer
+  </button>
+</div>
         {/* TAB BUTTONS */}
         <div className="flex gap-3 mt-4">
           <button
             onClick={() => setActiveTab("expenses")}
-            className={`px-4 py-2 rounded-lg ${
-              activeTab === "expenses"
-                ? "bg-blue-600"
-                : darkMode
-  ? "bg-slate-700 hover:bg-slate-600"
-  : "bg-gray-200 hover:bg-gray-300 text-black"
-            }`}
+            className={`px-5 py-2.5 rounded-xl font-medium transition ${
+  activeTab === "expenses"
+    ? "bg-indigo-600 text-white shadow-sm"
+    : darkMode
+    ? "bg-slate-800 hover:bg-slate-700 border border-slate-700"
+    : "bg-white hover:bg-gray-100 border"
+}`}
           >
             Expenses
           </button>
 
           <button
             onClick={() => setActiveTab("settlements")}
-            className={`px-4 py-2 rounded-lg ${
-              activeTab === "settlements"
-                ? "bg-blue-600"
-                : darkMode
-  ? "bg-slate-700 hover:bg-slate-600"
-  : "bg-gray-200 hover:bg-gray-300 text-black"
-            }`}
+            className={`px-5 py-2.5 rounded-xl font-medium transition ${
+  activeTab === "expenses"
+    ? "bg-indigo-600 text-white shadow-sm"
+    : darkMode
+    ? "bg-slate-800 hover:bg-slate-700 border border-slate-700"
+    : "bg-white hover:bg-gray-100 border"
+}`}
           >
             Settlements
           </button>
@@ -595,176 +754,54 @@ useEffect(() => {
             <input
             value={search}
               placeholder="Search expenses..."
-              className={`w-full p-2 rounded mb-3 ${
+              className={`w-full p-3 rounded-xl mb-4 ${
   darkMode
-    ? "bg-slate-700 text-white"
-    : "bg-gray-100 text-black border"
+    ? "bg-slate-800 border border-slate-700"
+    : "bg-white border"
 }`}
               onChange={e => setSearch(e.target.value)}
             />
 
-            <div className="overflow-auto">
-              <table className="w-full border-collapse">
-                <thead className={darkMode ? "bg-slate-700" : "bg-gray-200"}>
-                  <tr>
-                    <th className="p-2 text-left">Title</th>
-                    <th className="p-2 text-left">Amount</th>
-                    <th className="p-2 text-left">Paid By</th>
-                    <th className="p-2 text-left">Date / Actions</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {paginatedExpenses.map(exp => (
-                    <tr
-  key={exp.id}
-  className={`border-b ${
-    darkMode ? "border-slate-700" : "border-gray-300"
-  }`}
->
-
-                      {/* TITLE */}
-                      <td className="p-2">
-                        {editingId === exp.id ? (
-                          <input
-                            value={editTitle}
-                            onChange={e => setEditTitle(e.target.value)}
-                            className={`w-full p-1 rounded ${
-  darkMode
-    ? "bg-slate-600 text-white"
-    : "bg-white border text-black"
-}`}
-                          />
-                        ) : exp.title}
-                      </td>
-
-                      {/* AMOUNT */}
-                      <td className="p-2">
-                        {editingId === exp.id ? (
-                          <input
-                            value={editAmount}
-                            onChange={e => setEditAmount(e.target.value)}
-                            className={`w-full p-1 rounded ${
-  darkMode
-    ? "bg-slate-600 text-white"
-    : "bg-white border text-black"
-}`}
-                          />
-                        ) : `₹${exp.amount}`}
-                      </td>
-
-                      {/* PAID BY */}
-                      <td className="p-2">
-                        {editingId === exp.id ? (
-                          <select
-                            value={editPaidBy}
-                            onChange={e => setEditPaidBy(e.target.value)}
-                            className={`p-1 rounded ${
-  darkMode
-    ? "bg-slate-600 text-white"
-    : "bg-white border text-black"
-}`}
-                          >
-                            <option value="Founder1">Founder1</option>
-                            <option value="Founder2">Founder2</option>
-                            <option value="Founder3">Founder3</option>
-                            <option value="Company">Company</option>
-                          </select>
-                        ) : exp.paidBy}
-                      </td>
-
-                      {/* DATE + ACTIONS */}
-                      <td className="p-2">
-                        {exp.createdAt
-                          ? formatDate(new Date(exp.createdAt.seconds * 1000))
-                          : "N/A"}
-
-                        <div className="flex gap-2 mt-1">
-
-                          {editingId === exp.id ? (
-                            <>
-                              <button
-                                onClick={() => saveEdit(exp.id)}
-                                className="bg-green-600 px-2 py-1 rounded"
-                              >
-                                Save
-                              </button>
-                              <button
-                                onClick={cancelEdit}
-                                className="bg-gray-500 px-2 py-1 rounded"
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => startEdit(exp)}
-                                className="bg-blue-600 px-2 py-1 rounded"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => deleteExpense(exp.id)}
-                                className="bg-red-600 px-2 py-1 rounded"
-                              >
-                                Delete
-                              </button>
-                            </>
-                          )}
-
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+  theme={darkMode ? "darkProfessional" : "default"}
+  columns={expenseColumns}
+  data={filteredExpenses}
+  pagination
+  highlightOnHover
+  striped
+  responsive
+  paginationPerPage={8}
+  paginationRowsPerPageOptions={[8, 16, 24]}
+/>
           </>
         )}
 
         {/* ================= SETTLEMENT TABLE ================= */}
         {activeTab === "settlements" && (
           <>
-            <h2 className="text-xl font-semibold mt-4">
-              Settlement History
-            </h2>
 
-            <div className="overflow-auto">
-              <table className="w-full border-collapse">
-                <thead className={darkMode ? "bg-slate-700" : "bg-gray-200"}>
-                  <tr>
-                    <th className="p-2 text-left">Founder</th>
-                    <th className="p-2 text-left">Amount Paid</th>
-                    <th className="p-2 text-left">Date</th>
-                  </tr>
-                </thead>
 
-                <tbody>
-                  {paginatedSettlements.map(s => (
-                    <tr
-  key={s.id}
-  className={`border-b ${
-    darkMode ? "border-slate-700" : "border-gray-300"
-  }`}
->
-                      <td className="p-2">{s.founder}</td>
-                      <td className="p-2">₹{s.amount}</td>
-                      <td className="p-2">
-                        {s.settledAt
-                          ? formatDate(new Date(s.settledAt.seconds * 1000))
-                          : "N/A"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <h2 className="text-xl font-semibold mb-2">
+  Settlement History
+</h2>
+
+<DataTable
+  theme={darkMode ? "darkProfessional" : "default"}
+  columns={settlementColumns}
+  data={settlements} 
+  pagination
+  highlightOnHover
+  striped
+  responsive
+  paginationPerPage={8}
+  paginationRowsPerPageOptions={[8, 16, 24]}
+/>
           </>
         )}
 
       </div>
     </div>
+  </div>
   </div>
 );
 
