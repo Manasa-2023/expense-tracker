@@ -14,10 +14,30 @@ createTheme("darkProfessional", {
     secondary: "#94A3B8",
   },
   background: {
-    default: "#1E293B",
-  },
+  default: "#0F172A",
+},
+context: {
+  background: "#0F172A",
+  text: "#E2E8F0",
+},
   divider: {
     default: "#334155",
+  },
+});
+createTheme("lightProfessional", {
+  text: {
+    primary: "#111827",       
+    secondary: "#6B7280",     
+  },
+  background: {
+    default: "#FFFFFF",       
+  },
+  context: {
+    background: "#F9FAFB",
+    text: "#111827",
+  },
+  divider: {
+    default: "#E5E7EB",      
   },
 });
 
@@ -45,7 +65,6 @@ export default function ExpensePage() {
   const [editAmount, setEditAmount] = useState("");
   const [editPaidBy, setEditPaidBy] = useState("");
   const [darkMode, setDarkMode] = useState(true); // default dark
-  // NEW transfer states (for Paid To feature)
 const [fromAccount, setFromAccount] = useState("");
 const [toAccount, setToAccount] = useState("");
 const [transferAmount, setTransferAmount] = useState("");
@@ -173,17 +192,17 @@ const founderPayments = expenses
   .filter(e => founders.includes(e.paidBy))
   .reduce((sum, e) => sum + e.amount, 0);
 
-// Total paid by company
-const companyPayments = expenses
-  .filter(e => e.paidBy === companyName)
-  .reduce((sum, e) => sum + e.amount, 0);
+// TOTAL COMPANY EXPENSE (ALL EXPENSES)
+const totalCompanyExpense = expenses.reduce(
+  (sum, e) => sum + e.amount,
+  0
+);
 
-// Each founder share of company expenses
+// EACH FOUNDER SHARE
 const eachShare =
   founders.length > 0
-    ? Number((companyPayments / founders.length).toFixed(2))
+    ? Number((totalCompanyExpense / founders.length).toFixed(2))
     : 0;
-
 // Track how much each founder paid
 const paidMap: any = { Founder1: 0, Founder2: 0, Founder3: 0 };
 
@@ -212,28 +231,41 @@ settlements.forEach(s => {
 
 // Calculate balances
 const balances = founders.map(name => {
-  const paid = paidMap[name];
+  const paid = paidMap[name] || 0;
   const settled = settlementMap[name] || 0;
+  const previousDue = carryForward[name] || 0;
 
-  // Founder should pay their share of company expenses
-  const shouldPay = eachShare;
+  // Net before settlement
+  const net = paid - eachShare;
 
-  // If founder paid personally, company owes them
-  const companyOwes = paid;
+  // Apply settlements & previous dues
+  const finalBalance = parseFloat(
+    (net + settled + previousDue).toFixed(2)
+  );
 
- const previousDue = carryForward[name] || 0;
-
-const balance = parseFloat(
-  (companyOwes - shouldPay + settled + previousDue).toFixed(2)
-);
-
-  return { name, paid, balance };
+  return {
+    name,
+    paid,
+    companyOwes: finalBalance > 0 ? finalBalance : 0,
+    founderOwes: finalBalance < 0 ? Math.abs(finalBalance) : 0,
+    finalBalance
+  };
 });
 
-  // NEW — record transfer (Paid By → Paid To)
+  // record transfer (Paid By → Paid To)
 const recordTransfer = async () => {
   if (!fromAccount || !toAccount || !transferAmount) {
     alert("Fill all fields");
+    return;
+  }
+
+  if (fromAccount === toAccount) {
+    alert("Cannot transfer to the same account.");
+    return;
+  }
+
+  if (Number(transferAmount) <= 0) {
+    alert("Amount must be greater than zero.");
     return;
   }
 
@@ -270,14 +302,14 @@ const confirmReset = confirm(
   if (!confirmReset) return;
 
   for (const b of balances) {
-    if (Math.abs(b.balance) > 1) {
-      await setDoc(
-  doc(db, "carryForward", currentMonth, "balances", b.name),
-  {
-    amount: b.balance
-  }
-);
+    if (Math.abs(b.finalBalance) > 1) {
+  await setDoc(
+    doc(db, "carryForward", currentMonth, "balances", b.name),
+    {
+      amount: b.finalBalance
     }
+  );
+}
   }
 
   alert("Billing cycle closed. New month started.");
@@ -301,7 +333,7 @@ const isOverdue = () => {
   const today = new Date();
   const due = getDueDate();
 
-  const hasPending = balances.some(b => Math.abs(b.balance) > 1);
+  const hasPending = balances.some(b => Math.abs(b.finalBalance) > 1);
 
   return today > due && hasPending;
 };
@@ -399,14 +431,37 @@ const settlementColumns = [
 }
 ];
 
+const tableStyles = {
+  rows: {
+    style: {
+      minHeight: "60px",
+      fontSize: "14px",
+    },
+  },
+  headCells: {
+    style: {
+      fontSize: "13px",
+      fontWeight: 600,
+      textTransform: "uppercase" as const,
+      letterSpacing: "0.5px",
+    },
+  },
+  cells: {
+    style: {
+      paddingTop: "14px",
+      paddingBottom: "14px",
+    },
+  },
+};
+
   /* ---------------- UI ---------------- */
 
 return (
   <div
   className={`min-h-screen ${
     darkMode
-      ? "bg-slate-950 text-slate-100"
-      : "bg-slate-50 text-slate-900"
+? "bg-neutral-900 text-neutral-100"
+  : "bg-gray-50 text-gray-900"
   }`}
 >
   <div className="max-w-7xl mx-auto px-6 py-8">
@@ -421,8 +476,8 @@ return (
     onClick={() => setDarkMode(!darkMode)}
     className={`px-5 py-2.5 rounded-xl font-medium shadow-sm transition ${
       darkMode
-        ? "bg-slate-800 hover:bg-slate-700 border border-slate-700"
-        : "bg-white hover:bg-gray-100 border"
+        ? "bg-neutral-800 border border-neutral-700 hover:bg-neutral-700"
+        : "bg-white hover:bg-gray-100 shadow-sm"
     }`}
   >
     {darkMode ? "☀ Light Mode" : "🌙 Dark Mode"}
@@ -434,8 +489,8 @@ return (
       <button
         className={`px-5 py-2.5 rounded-xl font-medium transition ${
   darkMode
-    ? "bg-slate-800 hover:bg-slate-700 border border-slate-700"
-    : "bg-white hover:bg-gray-100 border"
+    ? "bg-neutral-800 border border-neutral-700 hover:bg-neutral-700"
+    : "bg-white hover:bg-gray-100 shadow-sm"
 }`}
         onClick={() =>
           setSelectedDate(
@@ -451,8 +506,8 @@ return (
       <button
         className={`px-5 py-2.5 rounded-xl font-medium transition ${
   darkMode
-    ? "bg-slate-800 hover:bg-slate-700 border border-slate-700"
-    : "bg-white hover:bg-gray-100 border"
+    ? "bg-neutral-800 border border-neutral-700 hover:bg-neutral-700"
+    : "bg-white hover:bg-gray-100 shadow-sm"
 }`}
         onClick={() =>
           setSelectedDate(
@@ -468,10 +523,10 @@ return (
 
      {/* LEFT — ADD EXPENSE */}
 <div
-  className={`rounded-2xl p-6 shadow-lg space-y-4 h-fit xl:col-span-1 ${
+  className={`rounded-2xl p-6 shadow-sm space-y-4 h-fit xl:col-span-1 ${
     darkMode
-  ? "bg-slate-900 border border-slate-800 shadow-xl"
-  : "bg-white border shadow-sm"
+  ? "bg-neutral-800 border border-neutral-700 shadow-sm"
+  : "bg-white shadow-sm"
   }`}
 >
         <h2 className="text-xl font-semibold tracking-tight">
@@ -479,10 +534,10 @@ return (
 </h2>
 
         <input
-          className={`w-full p-3 rounded ${
+          className={`w-full p-3 rounded-xl ${
   darkMode
-    ? "bg-slate-800 border border-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none text-white"
-    : "bg-gray-100 text-black border"
+    ? "bg-neutral-700 border border-neutral-600 focus:ring-1 focus:ring-neutral-500 outline-none"
+    : "bg-white text-black shadow-sm focus:ring-1 focus:ring-neutral-400 outline-none"
 }`}
           placeholder="Expense Title"
           value={title}
@@ -490,10 +545,10 @@ return (
         />
 
         <input
-          className={`w-full p-3 rounded ${
+          className={`w-full p-3 rounded-xl ${
   darkMode
-    ? "bg-slate-800 border border-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none text-white"
-    : "bg-gray-100 text-black border"
+    ? "bg-neutral-700 border border-neutral-600 focus:ring-1 focus:ring-neutral-500 outline-none"
+    : "bg-white text-black shadow-sm focus:ring-1 focus:ring-neutral-400 outline-none"
 }`}
           placeholder="Amount"
           value={amount}
@@ -501,10 +556,10 @@ return (
         />
 
         <select
-          className={`w-full p-3 rounded ${
+          className={`w-full p-3 rounded-xl ${
   darkMode
-    ? "bg-slate-800 border border-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none text-white"
-    : "bg-gray-100 text-black border"
+    ? "bg-neutral-700 border border-neutral-600 focus:ring-1 focus:ring-neutral-500 outline-none"
+    : "bg-white text-black shadow-sm focus:ring-1 focus:ring-neutral-400 outline-none"
 }`}
           value={paidBy}
           onChange={e => setPaidBy(e.target.value)}
@@ -517,78 +572,99 @@ return (
         </select>
 
         <button
-          onClick={addExpense}
-          className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-xl font-medium text-white shadow-sm transition"
-        >
+  onClick={addExpense}
+  className={`w-full py-3 rounded-xl font-medium transition-all duration-150 active:scale-[0.985] ${
+    darkMode
+      ? "bg-indigo-600 hover:bg-indigo-500 text-white"
+      : "bg-neutral-900 hover:bg-neutral-800 text-white"
+  }`}
+>
           Add Expense
         </button>
       </div>
 
       {/* RIGHT PANEL */}
 <div
-  className={`rounded-2xl p-6 shadow-lg space-y-6 xl:col-span-2 ${
+  className={`rounded-2xl p-6 shadow-sm space-y-6 xl:col-span-2 ${
     darkMode
-  ? "bg-slate-900 border border-slate-800 shadow-xl"
-  : "bg-white border shadow-sm"
+      ? "bg-neutral-800 border border-neutral-700 shadow-sm"
+      : "bg-white shadow-sm"
   }`}
 >
 
         {/* KPI GRID */}
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
 
-          <div
-  className={`p-6 rounded-2xl shadow-lg ${
-    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
-  }`}
->
-            <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Company Expenses</p>
-            <p className="text-xl font-bold">
-              ₹{companyPayments.toLocaleString("en-IN")}
-            </p>
-          </div>
+  {/* Total Expenses */}
+  <div
+    className={`p-6 rounded-2xl border shadow-sm transition-all duration-200 ${
+  darkMode
+    ? "bg-neutral-900 border-neutral-800 hover:-translate-y-0.5 hover:shadow-md"
+    : "bg-white border-gray-200 hover:-translate-y-0.5 hover:shadow-md"
+}`}
+  >
+    <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
+      Total Expenses
+    </p>
+    <p className="text-2xl md:text-3xl font-bold tracking-tight">
+      ₹{totalCompanyExpense.toLocaleString("en-IN")}
+    </p>
+  </div>
 
-          <div
-  className={`p-6 rounded-2xl shadow-lg ${
-    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
-  }`}
->
-           <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Founder Payments</p>
-            <p className="text-xl font-bold">
-              ₹{founderPayments.toLocaleString("en-IN")}
-            </p>
-          </div>
+  {/* Paid by Founders */}
+  <div
+    className={`p-6 rounded-2xl border shadow-sm transition-all duration-200 ${
+  darkMode
+    ? "bg-neutral-900 border-neutral-800 hover:-translate-y-0.5 hover:shadow-md"
+    : "bg-white border-gray-200 hover:-translate-y-0.5 hover:shadow-md"
+}`}
+  >
+    <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
+      Paid by Founders
+    </p>
+    <p className="text-2xl md:text-3xl font-bold tracking-tight">
+      ₹{founderPayments.toLocaleString("en-IN")}
+    </p>
+  </div>
 
-          <div
-  className={`p-6 rounded-2xl shadow-lg ${
-    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
-  }`}
->
-            <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Each Share</p>
-            <p className="text-xl font-bold">
-              ₹{eachShare.toLocaleString("en-IN")}
-            </p>
-          </div>
+  {/* Each Share */}
+  <div
+   className={`p-6 rounded-2xl border shadow-sm transition-all duration-200 ${
+  darkMode
+    ? "bg-neutral-900 border-neutral-800 hover:-translate-y-0.5 hover:shadow-md"
+    : "bg-white border-gray-200 hover:-translate-y-0.5 hover:shadow-md"
+}`}
+  >
+    <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
+      Each Share
+    </p>
+    <p className="text-2xl md:text-3xl font-bold tracking-tight">
+      ₹{eachShare.toLocaleString("en-IN")}
+    </p>
+  </div>
 
-          <div
-  className={`p-6 rounded-2xl shadow-lg ${
-    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
-  }`}
->
-            <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Total Due</p>
-            <p className="text-xl font-bold">
-              ₹{(
-                companyPayments -
-                founderPayments +
-                Object.values(carryForward).reduce((a:any,b:any)=>a+b,0)
-              ).toFixed(0)}
-            </p>
-          </div>
-        </div>
+  {/* Total Due */}
+  <div
+    className={`p-6 rounded-2xl border shadow-sm transition-all duration-200 ${
+  darkMode
+    ? "bg-neutral-900 border-neutral-800 hover:-translate-y-0.5 hover:shadow-md"
+    : "bg-white border-gray-200 hover:-translate-y-0.5 hover:shadow-md"
+}`}
+  >
+    <p className={`text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
+      Total Due
+    </p>
+    <p className="text-3xl md:text-4xl font-bold tracking-tight text-emerald-400">
+      ₹{balances.reduce((sum, b) => sum + b.companyOwes, 0).toFixed(2)}
+    </p>
+  </div>
+
+</div>
 
         {/* STATEMENT */}
         <div
-  className={`p-6 rounded-2xl space-y-2 shadow-lg ${
-    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
+  className={`p-6 rounded-2xl space-y-2 shadow-sm ${
+    darkMode ? "bg-neutral-800 border border-neutral-700" : "bg-white"
   }`}
 >
           <h2 className="text-lg font-semibold">Company Statement</h2>
@@ -599,60 +675,108 @@ return (
               Object.values(carryForward).reduce((a:any,b:any)=>a+b,0)
             }
           </p>
-          <p>New Company Expenses: ₹{companyPayments}</p>
-          <p>Total Founder Payments: ₹{founderPayments}</p>
+          <p>Total Expenses This Month: ₹{totalCompanyExpense}</p>
+<p>Total Paid by Founders: ₹{founderPayments}</p>
 
-          <p className="text-2xl font-bold text-indigo-400">
-            TOTAL DUE: ₹{
-              (
-                companyPayments -
-                founderPayments +
-                Object.values(carryForward).reduce((a:any,b:any)=>a+b,0)
-              ).toFixed(2)
-            }
-          </p>
+          <p className={`text-3xl font-bold tracking-tight ${
+  balances.some(b => b.companyOwes > 0)
+  ? "text-emerald-400"
+  : balances.some(b => b.founderOwes > 0)
+  ? "text-rose-400"
+  : "text-slate-400"
+}`}>
+  TOTAL DUE: ₹{
+    balances.reduce((sum, b) => sum + b.companyOwes, 0).toFixed(2)
+  }
+</p>
 
           <p>Cycle Ends: {formatDate(getCycleEndDate())}</p>
           <p>Due Date: {formatDate(getDueDate())}</p>
 
-          <p>
-            {isOverdue()
-              ? "🔴 OVERDUE"
-              : balances.some(b => Math.abs(b.balance) > 1)
-              ? "🟡 Payment Pending"
-              : "🟢 Settled"}
-          </p>
+          <p className={`font-medium ${
+  isOverdue()
+    ? "text-rose-400"
+    : balances.some(b => Math.abs(b.finalBalance) > 1)
+    ? "text-amber-400"
+    : "text-emerald-400"
+}`}>
+  {isOverdue()
+    ? "Overdue"
+    : balances.some(b => Math.abs(b.finalBalance) > 1)
+    ? "Payment Pending"
+    : "Settled"}
+</p>
         </div>
 
         <button
-          onClick={resetMonth}
-          className="w-full bg-red-600 hover:bg-red-700 py-3 rounded-xl font-medium text-white shadow-sm transition"
-        >
+  onClick={resetMonth}
+  className={`w-full py-3 rounded-xl font-medium transition-all duration-150 active:scale-[0.985] ${
+    darkMode
+      ? "bg-rose-600 hover:bg-rose-500 text-white"
+      : "bg-neutral-900 hover:bg-neutral-800 text-white"
+  }`}
+>
           Reset Month
         </button>
 
         {/* BALANCES */}
-        <div className="space-y-3">
-          {balances
-            .filter(b => Math.abs(b.balance) > 0.5)
-            .map(b => (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {balances.map(b => (
               <div
   key={b.name}
- className={`p-6 rounded-2xl shadow-lg ${
-    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
+  className={`p-6 rounded-2xl shadow-sm flex flex-col gap-4 ${
+    darkMode
+  ? "bg-neutral-800 border border-neutral-700"
+  : "bg-white border border-gray-200"
   }`}
 >
-                <p className="font-bold">{b.name}</p>
-                <p>Total Paid: ₹{b.paid}</p>
-                <p>Total Settled: ₹{settlementMap[b.name] || 0}</p>
-                <p>Previous Due: ₹{carryForward[b.name] || 0}</p>
+                <p className="text-base font-semibold tracking-tight">{b.name}</p>
 
-                <p className="font-semibold mt-1">
-                  {b.balance > 0
-                    ? `Company owes ₹${b.balance.toFixed(2)}`
-                    : `Owes Company ₹${Math.abs(b.balance).toFixed(2)}`
-                  }
-                </p>
+<div>
+  <p className="text-sm">Total Paid: ₹{b.paid.toFixed(2)}</p>
+
+  {b.finalBalance > 0 ? (
+  <p className={`${darkMode ? "text-emerald-400" : "text-emerald-600"} font-semibold text-lg`}>
+    Company owes ₹{b.finalBalance.toFixed(2)}
+  </p>
+) : b.finalBalance < 0 ? (
+  <p className={`${darkMode ? "text-rose-400" : "text-rose-600"} font-semibold text-lg`}>
+    You owe company ₹{Math.abs(b.finalBalance).toFixed(2)}
+  </p>
+) : (
+  <p
+  className={`font-semibold text-lg ${
+    darkMode ? "text-neutral-500" : "text-neutral-700"
+  }`}
+>
+  Settled
+</p>
+)}
+</div>
+
+<div
+  className={`mt-3 pt-3 border-t ${
+    darkMode ? "border-slate-700" : "border-gray-200"
+  }`}
+>
+  <p
+  className={`text-xs ${
+    darkMode ? "text-neutral-400" : "text-neutral-600"
+  }`}
+>
+    Settled: ₹{Math.abs(settlementMap[b.name] || 0).toFixed(2)}
+    {settlementMap[b.name] > 0 && " (Paid to Company)"}
+    {settlementMap[b.name] < 0 && " (Received)"}
+  </p>
+
+  <p
+  className={`text-xs ${
+    darkMode ? "text-neutral-400" : "text-neutral-600"
+  }`}
+>
+    Previous Due: ₹{(carryForward[b.name] || 0).toFixed(2)}
+  </p>
+</div>
 
 
               </div>
@@ -660,8 +784,8 @@ return (
         </div>
 {/* ===== RECORD TRANSFER (Paid By → Paid To) ===== */}
 <div
-  className={`p-6 rounded-2xl shadow-lg ${
-    darkMode ? "bg-slate-800 border border-slate-700" : "bg-gray-100 border"
+  className={`p-6 rounded-2xl shadow-sm ${
+    darkMode ? "bg-neutral-800 border border-neutral-700" : "bg-white"
   }`}
 >
   <h2 className="text-lg font-semibold mb-2">
@@ -670,12 +794,14 @@ return (
 
   {/* FROM */}
   <select
-    value={fromAccount}
-    onChange={e => setFromAccount(e.target.value)}
-    className={`w-full p-2 rounded mb-2 ${
-      darkMode ? "bg-slate-600 text-white" : "bg-white border"
-    }`}
-  >
+  value={fromAccount}
+  onChange={e => setFromAccount(e.target.value)}
+  className={`w-full p-3 rounded-xl mb-3 transition ${
+    darkMode
+      ? "bg-neutral-700 border border-neutral-600 focus:ring-1 focus:ring-neutral-500 outline-none"
+      : "bg-white border border-gray-300 focus:ring-1 focus:ring-gray-400 outline-none"
+  }`}
+>
     <option value="">Paid By</option>
     {accounts.map(a => (
       <option key={a} value={a}>
@@ -686,33 +812,43 @@ return (
 
   {/* TO */}
   <select
-    value={toAccount}
-    onChange={e => setToAccount(e.target.value)}
-    className={`w-full p-2 rounded mb-2 ${
-      darkMode ? "bg-slate-600 text-white" : "bg-white border"
-    }`}
-  >
+  value={toAccount}
+  onChange={e => setToAccount(e.target.value)}
+  className={`w-full p-3 rounded-xl mb-3 transition ${
+    darkMode
+      ? "bg-neutral-700 border border-neutral-600 focus:ring-1 focus:ring-neutral-500 outline-none"
+      : "bg-white border border-gray-300 focus:ring-1 focus:ring-gray-400 outline-none"
+  }`}
+>
     <option value="">Paid To</option>
-    {accounts.map(a => (
-      <option key={a} value={a}>
-        {a}
-      </option>
-    ))}
+    {accounts
+  .filter(a => a !== fromAccount)
+  .map(a => (
+    <option key={a} value={a}>
+      {a}
+    </option>
+))}
   </select>
 
   {/* AMOUNT */}
   <input
-    placeholder="Amount"
-    value={transferAmount}
-    onChange={e => setTransferAmount(e.target.value)}
-    className={`w-full p-2 rounded mb-2 ${
-      darkMode ? "bg-slate-600 text-white" : "bg-white border"
-    }`}
-  />
+  placeholder="Amount"
+  value={transferAmount}
+  onChange={e => setTransferAmount(e.target.value)}
+  className={`w-full p-3 rounded-xl mb-4 transition ${
+    darkMode
+      ? "bg-neutral-700 border border-neutral-600 focus:ring-1 focus:ring-neutral-500 outline-none"
+      : "bg-white border border-gray-300 focus:ring-1 focus:ring-gray-400 outline-none"
+  }`}
+/>
 
   <button
     onClick={recordTransfer}
-    className="w-full bg-indigo-600 hover:bg-indigo-700 py-2 rounded font-medium text-white"
+    className={`w-full py-3 rounded-xl font-medium transition-all duration-150 active:scale-[0.985] ${
+  darkMode
+    ? "bg-black hover:bg-neutral-900 text-white"
+    : "bg-black hover:bg-neutral-800 text-white"
+}`}
   >
     Record Transfer
   </button>
@@ -723,10 +859,10 @@ return (
             onClick={() => setActiveTab("expenses")}
             className={`px-5 py-2.5 rounded-xl font-medium transition ${
   activeTab === "expenses"
-    ? "bg-indigo-600 text-white shadow-sm"
+    ? "bg-indigo-500 text-white shadow-sm"
     : darkMode
-    ? "bg-slate-800 hover:bg-slate-700 border border-slate-700"
-    : "bg-white hover:bg-gray-100 border"
+    ? "bg-neutral-800 border border-neutral-700 hover:bg-neutral-700"
+    : "bg-white hover:bg-gray-100 shadow-sm"
 }`}
           >
             Expenses
@@ -735,11 +871,11 @@ return (
           <button
             onClick={() => setActiveTab("settlements")}
             className={`px-5 py-2.5 rounded-xl font-medium transition ${
-  activeTab === "expenses"
-    ? "bg-indigo-600 text-white shadow-sm"
+  activeTab === "settlements"
+    ? "bg-indigo-500 text-white shadow-sm"
     : darkMode
-    ? "bg-slate-800 hover:bg-slate-700 border border-slate-700"
-    : "bg-white hover:bg-gray-100 border"
+    ? "bg-neutral-800 border border-neutral-700 hover:bg-neutral-700"
+    : "bg-white hover:bg-gray-100 shadow-sm"
 }`}
           >
             Settlements
@@ -763,7 +899,8 @@ return (
             />
 
             <DataTable
-  theme={darkMode ? "darkProfessional" : "default"}
+  theme={darkMode ? "darkProfessional" : "lightProfessional"}
+  customStyles={tableStyles}
   columns={expenseColumns}
   data={filteredExpenses}
   pagination
@@ -786,7 +923,8 @@ return (
 </h2>
 
 <DataTable
-  theme={darkMode ? "darkProfessional" : "default"}
+  theme={darkMode ? "darkProfessional" : "lightProfessional"}
+  customStyles={tableStyles}
   columns={settlementColumns}
   data={settlements} 
   pagination
@@ -806,4 +944,3 @@ return (
 );
 
 }
-
